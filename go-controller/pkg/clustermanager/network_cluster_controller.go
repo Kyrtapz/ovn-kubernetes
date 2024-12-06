@@ -16,6 +16,7 @@ import (
 	"k8s.io/klog/v2"
 
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/id"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/ip/subnet"
 	annotationalloc "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
@@ -454,6 +455,10 @@ type networkClusterControllerEventHandler struct {
 	objType  reflect.Type
 	ncc      *networkClusterController
 	syncFunc func([]interface{}) error
+}
+
+func (h *networkClusterControllerEventHandler) FilterOutResource(obj interface{}) bool {
+	return false
 }
 
 // networkClusterControllerEventHandler functions
