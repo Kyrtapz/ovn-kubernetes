@@ -32,6 +32,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
 
 	kapi "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
@@ -197,7 +198,11 @@ type BaseSecondaryNetworkController struct {
 }
 
 func (oc *BaseSecondaryNetworkController) Reconcile(netInfo util.NetInfo) error {
-	return util.ReconcileNetInfo(oc.ReconcilableNetInfo, netInfo)
+	err := util.ReconcileNetInfo(oc.ReconcilableNetInfo, netInfo)
+	if err != nil {
+		return err
+	}
+	return oc.addAllPendingPods()
 }
 
 func getNetworkControllerName(netName string) string {
@@ -486,6 +491,35 @@ func (bnc *BaseNetworkController) deleteNodeLogicalNetwork(nodeName string) erro
 	}
 
 	return nil
+}
+
+// addAllPendingPods adds all pending pods from the namespaces managed by the bnc
+// to the pod retry mechanism.
+func (bnc *BaseSecondaryNetworkController) addAllPendingPods() error {
+	var errs []error
+	var allPods []*kapi.Pod
+
+	for _, namespace := range bnc.GetNamespaces() {
+		pods, err := bnc.kube.GetPods(namespace, metav1.ListOptions{
+			FieldSelector: fields.OneTermEqualSelector("status.phase", string(kapi.PodPending)).String(),
+		})
+		if err != nil {
+			return err
+		}
+		allPods = append(allPods, pods...)
+	}
+
+	for _, pod := range allPods {
+		pod := *pod
+		klog.Infof("Adding pending pod %s/%s to retryPods for network %s", pod.Namespace, pod.Name, bnc.GetNetworkName())
+		err := bnc.retryPods.AddRetryObjWithAddNoBackoff(&pod)
+		if err != nil {
+			errs = append(errs, err)
+			klog.Errorf("Failed to add pod %s/%s to retryPods for network %s: %v", pod.Namespace, pod.Name, bnc.GetNetworkName(), err)
+		}
+	}
+	bnc.retryPods.RequestRetryObjs()
+	return utilerrors.Join(errs...)
 }
 
 func (bnc *BaseNetworkController) addAllPodsOnNode(nodeName string) []error {
